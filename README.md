@@ -1,3 +1,4 @@
+
 # Agent Buyer
 
 **Secure Agentic Buyer — Razorpay Buildathon 2026.**
@@ -62,6 +63,72 @@ check passes does the backend call Razorpay (Test Mode).
   ```powershell
   ollama pull mistral:7b-instruct
   ```
+
+
+
+## Architecture
+
+The LLM reasons about what to buy — it can be wrong, guessed at, or even
+manipulated by malicious product data, so it holds **zero purchasing
+power**. Every purchase attempt is re-expressed as a plain database
+record and re-checked from scratch by the Payment Guardian, independent
+of anything the LLM concluded, before Razorpay is ever called.
+
+```mermaid
+flowchart TD
+    subgraph REASON["Discovery & Reasoning — untrusted, zero purchasing power"]
+        A["You<br/>chat + candidates UI"]
+        B["Backend API<br/>/api/chat · /api/recommend"]
+        C["LLM (Ollama)<br/>understand() → intent"]
+        D["Merchant Tool API<br/>search_products() · get_product() · check_inventory()"]
+        E[("Catalog DB<br/>Product table (SQLite)")]
+    end
+
+    subgraph AUTH["Authorization & Transaction — trusted"]
+        F["You<br/>select / approve / 'buy it'"]
+        G["Order record<br/>SEARCHED → SELECTED"]
+        H{{"Payment Guardian<br/>evaluate_iter() — 6 checks<br/>mode · exists · stock · currency · price · approval/authority"}}
+        I[("Order + Delegated Authority<br/>records — ground truth")]
+        J["Razorpay Test Mode"]
+        K(["Order → PAID<br/>verified, audit-logged"])
+        L(["DENY<br/>reason shown in chat —<br/>Razorpay never called"])
+    end
+
+    A -->|chat message| B --> C
+    C -->|tool call| D -->|SQL query| E
+    E -->|rows| D -->|result JSON| C
+    C -.->|candidates + recommendation, shown in chat| A
+    A --> F --> G -->|checkout request| H
+    I -.->|direct DB read — never via LLM| H
+    H -->|ALLOW| J --> K
+    H -->|DENY| L
+
+    classDef reason fill:#efe8fd,stroke:#6d3fd6,color:#3c2170
+    classDef trust fill:#e2f5ef,stroke:#0e8f6f,color:#0b4a3b
+    classDef deny fill:#fbe9e6,stroke:#c7402c,color:#7a2517
+
+    class A,B,C,D,E reason
+    class F,G,H,I,J,K trust
+    class L deny
+```
+
+**Walkthrough:**
+
+1. You type a request in plain language.
+2. The FastAPI backend receives it at `/api/chat`.
+3. The LLM's `understand()` call turns it into structured intent — category, budget, keywords.
+4. The LLM calls the `search_products()` tool — it cannot query the database directly.
+5. The tool queries the real catalog and returns real rows — the LLM never invents a product.
+6. The LLM reasons over those real results; candidates are shown back to you in chat.
+7. You approve a specific product, or your phrasing itself sets Fully-Autonomous intent.
+8. The backend writes a real Order record — the first artifact the Guardian can check against.
+9. The Payment Guardian re-checks everything from scratch — mode, product, stock, currency, price, and approval or delegated authority — against the database, not the LLM's claims.
+10. Only on ALLOW does the backend call Razorpay Test Mode. On DENY, Razorpay is never touched.
+
+
+
+
+
 
 ## Running it
 
